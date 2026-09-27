@@ -2,7 +2,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Public Practice</title>
+<title>Our Accounts Payable Table</title>
 
 <!-- jsPDF builds the PDF in the browser; autotable draws the records table -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -67,13 +67,14 @@ th{
 }
 </style>
 </head>
+
 <body bgcolor="#dfe6e9">
 
 <h2>Our Accounts Payable Table</h2>
 
-<label>Date of Occurence</label>
+<label>Date of Occurrence</label>
 <br>
-<input type="date" id="date_of_occurence">
+<input type="date" id="date_of_occurrence">
 <br>
 
 <label>Description</label>
@@ -104,7 +105,7 @@ th{
 
 <h2>Records</h2>
 
-<input type="text" id="search" placeholder="Search name or description">
+<input type="text" id="search" placeholder="Search description">
 <button onclick="loadRecords()">Search</button>
 <button id="pdfButton" onclick="savePdf()" disabled>Save as PDF</button>
 
@@ -113,14 +114,14 @@ th{
 <table id="records">
     <thead>
         <tr>
-            <th>Date of Occurence</th>
+            <th>Date of Occurrence</th>
             <th>Description</th>
-	    <th>Amount Due</th>
-	    <th>Payee Comments</th>
-	    <th>Payee Comments</th>
-
+            <th>Amount Due</th>
+            <th>Payee Comments</th>
+            <th>Payer Comments</th>
         </tr>
     </thead>
+
     <tbody></tbody>
 </table>
 
@@ -129,24 +130,33 @@ th{
 const API_URL =
 "https://e9beemph6k.execute-api.us-east-1.amazonaws.com/default/acctPayableTest";
 
-// The records (and search term) from the last successful fetch,
-// so the PDF matches exactly what is shown on the page
+// Records from the last successful fetch
 let lastRecords = [];
 let lastSearch = "";
 
 async function saveRecord(){
 
-    const date_of_occurence = document.getElementById("date_of_occurence").value.trim();
-    const desc = document.getElementById("desc").value.trim();
-    const amt_due = document.getElementById("amt_due").value.trim();
-    const payee_comments = document.getElementById("payee_comments").value.trim();
-    const payer_comments = document.getElementById("payer_comments").value.trim();
+    const date_of_occurrence =
+        document.getElementById("date_of_occurrence").value.trim();
+
+    const desc =
+        document.getElementById("desc").value.trim();
+
+    const amt_due =
+        document.getElementById("amt_due").value.trim();
+
+    const payee_comments =
+        document.getElementById("payee_comments").value.trim();
+
+    const payer_comments =
+        document.getElementById("payer_comments").value.trim();
 
     const resultDiv = document.getElementById("result");
 
-    // Make sure all fields except the last 2 contain data
-    if (!name || !desc) {
-        resultDiv.innerHTML = "Please enter information into the fields.";
+    // Validate required fields
+    if (!date_of_occurrence || !desc || !amt_due) {
+        resultDiv.innerHTML =
+            "Please enter the date, description, and amount due.";
         return;
     }
 
@@ -154,51 +164,65 @@ async function saveRecord(){
 
         const response = await fetch(API_URL, {
             method: "POST",
+
             headers: {
                 "Content-Type": "application/json"
             },
+
             body: JSON.stringify({
-                date_of_occurence: date_of_occurence,
-                description: description,
-		amt_due: amt_due,
-		payee_comments: payee_comments,
-		payer_comments: payer_comments
+                date_of_occurrence: date_of_occurrence,
+                description: desc,
+                amt_due: amt_due,
+                payee_comments: payee_comments,
+                payer_comments: payer_comments
             })
         });
 
         const result = await response.json();
 
         if (!response.ok) {
-            throw new Error(result.error || "Unable to save record");
+            throw new Error(
+                result.error || "Unable to save record"
+            );
         }
 
-        resultDiv.innerHTML = "Status: " + result.Status;
+        resultDiv.innerHTML =
+            "Status: " + (result.Status || "Record saved successfully");
 
-        // Clear the fields if the save was successful
-        document.getElementById("date_of_occurence").value = "";
-        document.getElementById("description").value = "";
-	document.getElementById("amt_due").value = "";
-	document.getElementById("payee_comments").value = "";
-	document.getElementById("payer_comments").value = "";
+        // Clear form
+        document.getElementById("date_of_occurrence").value = "";
+        document.getElementById("desc").value = "";
+        document.getElementById("amt_due").value = "";
+        document.getElementById("payee_comments").value = "";
+        document.getElementById("payer_comments").value = "";
 
-        document.getElementById("date_of_occurence").focus();
+        document.getElementById("date_of_occurrence").focus();
 
-        // Refresh the table so the new record shows up
+        // Refresh records
         loadRecords();
 
     } catch (error) {
 
         console.error(error);
-        resultDiv.innerHTML = "Error: " + error.message;
+        resultDiv.innerHTML =
+            "Error: " + error.message;
     }
 }
 
+
 async function loadRecords(){
 
-    const search = document.getElementById("search").value.trim();
-    const statusDiv = document.getElementById("recordsStatus");
-    const tbody = document.querySelector("#records tbody");
-    const pdfButton = document.getElementById("pdfButton");
+    const search =
+        document.getElementById("search").value.trim();
+
+    const statusDiv =
+        document.getElementById("recordsStatus");
+
+    const tbody =
+        document.querySelector("#records tbody");
+
+    const pdfButton =
+        document.getElementById("pdfButton");
 
     statusDiv.innerHTML = "Loading...";
     pdfButton.disabled = true;
@@ -210,96 +234,204 @@ async function loadRecords(){
             : API_URL;
 
         const response = await fetch(url);
+
         const result = await response.json();
 
         if (!response.ok) {
-            throw new Error(result.error || "Unable to load records");
+            throw new Error(
+                result.error || "Unable to load records"
+            );
+        }
+
+        if (!Array.isArray(result.records)) {
+            throw new Error(
+                "The API response does not contain a records array."
+            );
         }
 
         tbody.innerHTML = "";
 
-        // Use textContent (not innerHTML) so user-entered text can't inject HTML
         for (const record of result.records) {
+
             const row = document.createElement("tr");
 
-            const nameCell = document.createElement("td");
-            nameCell.textContent = record.name;
+            const dateCell = document.createElement("td");
+            dateCell.textContent =
+                record.date_of_occurrence || "";
 
             const descCell = document.createElement("td");
-            descCell.textContent = record.description;
+            descCell.textContent =
+                record.description || "";
 
-            row.appendChild(nameCell);
+            const amountCell = document.createElement("td");
+            amountCell.textContent =
+                record.amt_due || "";
+
+            const payeeCell = document.createElement("td");
+            payeeCell.textContent =
+                record.payee_comments || "";
+
+            const payerCell = document.createElement("td");
+            payerCell.textContent =
+                record.payer_comments || "";
+
+            row.appendChild(dateCell);
             row.appendChild(descCell);
+            row.appendChild(amountCell);
+            row.appendChild(payeeCell);
+            row.appendChild(payerCell);
+
             tbody.appendChild(row);
         }
 
-        statusDiv.innerHTML = result.records.length + " record(s) found";
+        statusDiv.innerHTML =
+            result.records.length + " record(s) found";
 
-        // Remember what was fetched so it can be saved as a PDF
+        // Remember what was fetched for the PDF
         lastRecords = result.records;
         lastSearch = search;
-        pdfButton.disabled = lastRecords.length === 0;
+
+        pdfButton.disabled =
+            lastRecords.length === 0;
 
     } catch (error) {
 
         console.error(error);
-        statusDiv.innerHTML = "Error: " + error.message;
+
+        statusDiv.innerHTML =
+            "Error: " + error.message;
+
     }
 }
 
+
 function savePdf(){
 
-    const statusDiv = document.getElementById("recordsStatus");
+    const statusDiv =
+        document.getElementById("recordsStatus");
 
     if (lastRecords.length === 0) {
-        statusDiv.innerHTML = "There are no records to save.";
+        statusDiv.innerHTML =
+            "There are no records to save.";
         return;
     }
 
     try {
 
         const { jsPDF } = window.jspdf;
-        const doc = new jsPDF();
+
+        const doc = new jsPDF({
+            orientation: "landscape"
+        });
 
         const now = new Date();
 
         // Heading
         doc.setFontSize(16);
-        doc.text("Practice Public Table - Records", 14, 18);
+
+        doc.text(
+            "Accounts Payable - Records",
+            14,
+            18
+        );
 
         doc.setFontSize(10);
-        doc.text("Created: " + now.toLocaleString(), 14, 26);
-        doc.text("Search: " + (lastSearch || "(all records)"), 14, 32);
-        doc.text(lastRecords.length + " record(s)", 14, 38);
 
-        // Records table (wraps long text and adds pages automatically)
+        doc.text(
+            "Created: " + now.toLocaleString(),
+            14,
+            26
+        );
+
+        doc.text(
+            "Search: " + (lastSearch || "(all records)"),
+            14,
+            32
+        );
+
+        doc.text(
+            lastRecords.length + " record(s)",
+            14,
+            38
+        );
+
+        // Records table
         doc.autoTable({
+
             startY: 44,
-            head: [["Name", "Description"]],
-            body: lastRecords.map(record => [record.name, record.description]),
-            styles: { fontSize: 10, cellPadding: 3, overflow: "linebreak" },
-            headStyles: { fillColor: [178, 190, 195], textColor: 0 },
-            columnStyles: { 0: { cellWidth: 50 } }
+
+            head: [[
+                "Date of Occurrence",
+                "Description",
+                "Amount Due",
+                "Payee Comments",
+                "Payer Comments"
+            ]],
+
+            body: lastRecords.map(record => [
+
+                record.date_of_occurrence || "",
+
+                record.description || "",
+
+                record.amt_due || "",
+
+                record.payee_comments || "",
+
+                record.payer_comments || ""
+
+            ]),
+
+            styles: {
+                fontSize: 9,
+                cellPadding: 3,
+                overflow: "linebreak"
+            },
+
+            headStyles: {
+                fillColor: [178, 190, 195],
+                textColor: 0
+            },
+
+            columnStyles: {
+                0: { cellWidth: 32 },
+                1: { cellWidth: 55 },
+                2: { cellWidth: 28 },
+                3: { cellWidth: 65 },
+                4: { cellWidth: 65 }
+            }
         });
 
-        // File name like public_practice_2026-09-26.pdf
-        const fileDate = now.getFullYear() + "-"
-            + String(now.getMonth() + 1).padStart(2, "0") + "-"
-            + String(now.getDate()).padStart(2, "0");
+        // File name
+        const fileDate =
+            now.getFullYear() + "-" +
+            String(now.getMonth() + 1).padStart(2, "0") + "-" +
+            String(now.getDate()).padStart(2, "0");
 
-        doc.save("public_practice_" + fileDate + ".pdf");
+        doc.save(
+            "accounts_payable_" +
+            fileDate +
+            ".pdf"
+        );
 
     } catch (error) {
 
         console.error(error);
-        statusDiv.innerHTML = "Error creating PDF: " + error.message;
+
+        statusDiv.innerHTML =
+            "Error creating PDF: " + error.message;
     }
 }
 
-// Load the records when the page opens
+
+// Load records when page opens
 loadRecords();
 
 </script>
-<a href="https://main.d3aa0oh4rm4fbf.amplifyapp.com/">Return to home page</a>
+
+<a href="https://main.d3aa0oh4rm4fbf.amplifyapp.com/">
+    Return to home page
+</a>
+
 </body>
 </html>
