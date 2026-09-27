@@ -1,448 +1,248 @@
-import boto3
-import time
-import json
-import os
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Accounts Payable Test</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 16px;
+      background: #f7f7f8;
+      color: #222;
+    }
+    h1 { font-size: 1.6rem; }
+    h2 { font-size: 1.2rem; margin-top: 0; }
+    section {
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 20px;
+    }
+    label {
+      display: block;
+      font-weight: 600;
+      margin: 10px 0 4px;
+    }
+    input, textarea {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 8px;
+      font: inherit;
+      border: 1px solid #bbb;
+      border-radius: 4px;
+    }
+    textarea { min-height: 60px; resize: vertical; }
+    button {
+      margin-top: 12px;
+      padding: 8px 16px;
+      font: inherit;
+      border: none;
+      border-radius: 4px;
+      background: #2563eb;
+      color: #fff;
+      cursor: pointer;
+    }
+    button:disabled { background: #93a4c8; cursor: wait; }
+    .search-row { display: flex; gap: 8px; align-items: flex-end; }
+    .search-row input { flex: 1; }
+    .search-row button { margin-top: 0; }
+    .status { margin-top: 10px; min-height: 1.2em; }
+    .status.error { color: #b91c1c; }
+    .status.ok { color: #15803d; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td {
+      border-bottom: 1px solid #e5e5e5;
+      padding: 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: #f0f0f2; }
+    td.amount, th.amount { text-align: right; white-space: nowrap; }
+  </style>
+</head>
+<body>
 
+  <h1>Accounts Payable Test</h1>
 
-athena = boto3.client("athena")
+  <section>
+    <h2>Add a Record</h2>
+    <form id="addForm">
+      <label for="date_of_occurence">Date of Occurrence *</label>
+      <input type="date" id="date_of_occurence" name="date_of_occurence" required>
 
-DATABASE = "accountspayable"
-TABLE = "accounts_payable"
-WORKGROUP = "primary"
+      <label for="description">Description *</label>
+      <input type="text" id="description" name="description" maxlength="500" required>
 
-RESULTS = os.environ.get(
-    "RESULTS",
-    "s3://publictables/practice/"
-)
+      <label for="amt_due">Amount Due</label>
+      <input type="number" id="amt_due" name="amt_due" step="0.01" placeholder="0.00">
 
-MAX_LEN = 500
-MAX_ROWS = 500
+      <label for="payee_comments">Payee Comments</label>
+      <textarea id="payee_comments" name="payee_comments" maxlength="500"></textarea>
 
+      <label for="payer_comments">Payer Comments</label>
+      <textarea id="payer_comments" name="payer_comments" maxlength="500"></textarea>
 
-HEADERS = {
-    "Content-Type": "application/json",
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Content-Type",
-    "Access-Control-Allow-Methods": "GET,POST,OPTIONS"
-}
+      <button type="submit" id="addButton">Add Record</button>
+      <div id="addStatus" class="status"></div>
+    </form>
+  </section>
 
+  <section>
+    <h2>Records</h2>
+    <form id="searchForm" class="search-row">
+      <div style="flex: 1;">
+        <label for="search">Search (date or description)</label>
+        <input type="text" id="search" name="search" maxlength="500">
+      </div>
+      <button type="submit" id="searchButton">Search</button>
+    </form>
+    <div id="searchStatus" class="status"></div>
 
-def respond(status_code, body):
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Description</th>
+            <th class="amount">Amount Due</th>
+            <th>Payee Comments</th>
+            <th>Payer Comments</th>
+          </tr>
+        </thead>
+        <tbody id="recordsBody"></tbody>
+      </table>
+    </div>
+  </section>
 
-    return {
-        "statusCode": status_code,
-        "headers": HEADERS,
-        "body": json.dumps(body)
+  <script>
+    const API_URL = "https://e9beemph6k.execute-api.us-east-1.amazonaws.com/default/acctPayableTest";
+
+    const addForm = document.getElementById("addForm");
+    const addButton = document.getElementById("addButton");
+    const addStatus = document.getElementById("addStatus");
+    const searchForm = document.getElementById("searchForm");
+    const searchButton = document.getElementById("searchButton");
+    const searchStatus = document.getElementById("searchStatus");
+    const recordsBody = document.getElementById("recordsBody");
+
+    function setStatus(el, message, type) {
+      el.textContent = message;
+      el.className = "status" + (type ? " " + type : "");
     }
 
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
 
-def sql_string(value):
+    function formatAmount(value) {
+      const num = Number(value) || 0;
+      return num.toLocaleString("en-US", { style: "currency", currency: "USD" });
+    }
 
-    return "'" + str(value).replace("'", "''") + "'"
+    // Reads the response body and throws with the Lambda's error message on failure
+    async function readResponse(response) {
+      let data = {};
+      try {
+        data = await response.json();
+      } catch (e) {
+        // Non-JSON body (e.g. API Gateway timeout page)
+      }
+      if (!response.ok) {
+        throw new Error(data.error || data.message || `Request failed (HTTP ${response.status})`);
+      }
+      return data;
+    }
 
+    async function loadRecords() {
+      const search = document.getElementById("search").value.trim();
+      const url = search ? `${API_URL}?search=${encodeURIComponent(search)}` : API_URL;
 
-def run_query(query):
+      searchButton.disabled = true;
+      setStatus(searchStatus, "Loading records (Athena can take a few seconds)...");
 
-    print("Running Athena query:")
-    print(query)
+      try {
+        const response = await fetch(url, { method: "GET" });
+        const data = await readResponse(response);
+        const records = data.records || [];
 
-    response = athena.start_query_execution(
-        QueryString=query,
-
-        QueryExecutionContext={
-            "Database": DATABASE
-        },
-
-        WorkGroup=WORKGROUP,
-
-        ResultConfiguration={
-            "OutputLocation": RESULTS
+        if (records.length === 0) {
+          recordsBody.innerHTML = '<tr><td colspan="5">No records found.</td></tr>';
+        } else {
+          recordsBody.innerHTML = records.map(r => `
+            <tr>
+              <td>${escapeHtml(r.date_of_occurence)}</td>
+              <td>${escapeHtml(r.description)}</td>
+              <td class="amount">${formatAmount(r.amt_due)}</td>
+              <td>${escapeHtml(r.payee_comments)}</td>
+              <td>${escapeHtml(r.payer_comments)}</td>
+            </tr>
+          `).join("");
         }
-    )
 
-    query_id = response["QueryExecutionId"]
-
-    while True:
-
-        result = athena.get_query_execution(
-            QueryExecutionId=query_id
-        )
-
-        status_info = result["QueryExecution"]["Status"]
-        state = status_info["State"]
-
-        if state in (
-            "SUCCEEDED",
-            "FAILED",
-            "CANCELLED"
-        ):
-
-            if state != "SUCCEEDED":
-
-                reason = status_info.get(
-                    "StateChangeReason",
-                    state
-                )
-
-                print("Athena error:")
-                print(reason)
-
-                raise RuntimeError(reason)
-
-            return query_id
-
-        time.sleep(0.5)
-
-
-def insert_record(body):
-
-    date_of_occurence = (
-        body.get("date_of_occurence") or ""
-    ).strip()
-
-    description = (
-        body.get("description") or ""
-    ).strip()
-
-    amt_due_raw = body.get("amt_due")
-
-    payee_comments = (
-        body.get("payee_comments") or ""
-    ).strip()
-
-    payer_comments = (
-        body.get("payer_comments") or ""
-    ).strip()
-
-
-    # Required fields
-
-    if not date_of_occurence or not description:
-
-        return respond(
-            400,
-            {
-                "error":
-                    "Date of occurrence and description are required."
-            }
-        )
-
-
-    # Validate length
-
-    if len(date_of_occurence) > MAX_LEN:
-
-        return respond(
-            400,
-            {
-                "error":
-                    f"Date of occurrence must be "
-                    f"{MAX_LEN} characters or less."
-            }
-        )
-
-
-    if len(description) > MAX_LEN:
-
-        return respond(
-            400,
-            {
-                "error":
-                    f"Description must be "
-                    f"{MAX_LEN} characters or less."
-            }
-        )
-
-
-    # Validate amount
-
-    try:
-
-        if amt_due_raw in (
-            None,
-            ""
-        ):
-            amt_due = 0.0
-
-        else:
-            amt_due = float(amt_due_raw)
-
-    except (TypeError, ValueError):
-
-        return respond(
-            400,
-            {
-                "error":
-                    "Amount Due must be a valid number."
-            }
-        )
-
-
-    query = f"""
-    INSERT INTO {TABLE}
-    (
-        date_of_occurence,
-        description,
-        amt_due,
-        payee_comments,
-        payer_comments
-    )
-    VALUES
-    (
-        {sql_string(date_of_occurence)},
-        {sql_string(description)},
-        {amt_due},
-        {sql_string(payee_comments)},
-        {sql_string(payer_comments)}
-    )
-    """
-
-
-    query_id = run_query(query)
-
-
-    return respond(
-        200,
-        {
-            "QueryExecutionId": query_id,
-            "Status": "SUCCEEDED"
-        }
-    )
-
-
-def get_records(params):
-
-    search = (
-        params.get("search") or ""
-    ).strip()[:MAX_LEN]
-
-
-    query = f"""
-    SELECT
-        date_of_occurence,
-        description,
-        amt_due,
-        payee_comments,
-        payer_comments
-    FROM {TABLE}
-    """
-
-
-    if search:
-
-        pattern = "%" + search.lower() + "%"
-
-        query += f"""
-        WHERE lower(CAST(date_of_occurence AS VARCHAR))
-              LIKE {sql_string(pattern)}
-
-           OR lower(CAST(description AS VARCHAR))
-              LIKE {sql_string(pattern)}
-        """
-
-
-    query += f"""
-    ORDER BY date_of_occurence
-    LIMIT {MAX_ROWS}
-    """
-
-
-    query_id = run_query(query)
-
-
-    records = []
-
-
-    paginator = athena.get_paginator(
-        "get_query_results"
-    )
-
-
-    first_page = True
-
-
-    for page in paginator.paginate(
-        QueryExecutionId=query_id
-    ):
-
-        rows = page["ResultSet"]["Rows"]
-
-
-        if first_page:
-
-            rows = rows[1:]
-            first_page = False
-
-
-        for row in rows:
-
-            data = row.get("Data", [])
-
-
-            def get_value(index):
-
-                if index >= len(data):
-                    return ""
-
-                return data[index].get(
-                    "VarCharValue",
-                    ""
-                )
-
-
-            date_value = get_value(0)
-            description_value = get_value(1)
-            amount_value = get_value(2)
-            payee_value = get_value(3)
-            payer_value = get_value(4)
-
-
-            try:
-
-                amount = float(
-                    amount_value or 0
-                )
-
-            except (TypeError, ValueError):
-
-                amount = 0.0
-
-
-            records.append({
-
-                "date_of_occurence":
-                    date_value,
-
-                "description":
-                    description_value,
-
-                "amt_due":
-                    amount,
-
-                "payee_comments":
-                    payee_value,
-
-                "payer_comments":
-                    payer_value
-            })
-
-
-    return respond(
-        200,
-        {
-            "records": records
-        }
-    )
-
-
-def lambda_handler(event, context):
-
-    print("EVENT:")
-    print(json.dumps(event))
-
-
-    # Determine HTTP method
-
-    method = (
-        event
-        .get("requestContext", {})
-        .get("http", {})
-        .get("method")
-    )
-
-
-    # Fallback for older API Gateway events
-
-    if not method:
-
-        method = event.get(
-            "httpMethod",
-            "POST"
-        )
-
-
-    method = method.upper()
-
-
-    print("HTTP METHOD:", method)
-
-
-    # CORS preflight
-
-    if method == "OPTIONS":
-
-        return respond(
-            204,
-            {}
-        )
-
-
-    try:
-
-        # GET records
-
-        if method == "GET":
-
-            params = (
-                event.get(
-                    "queryStringParameters"
-                ) or {}
-            )
-
-            return get_records(params)
-
-
-        # POST new record
-
-        if method == "POST":
-
-            raw_body = event.get(
-                "body"
-            )
-
-
-            if raw_body:
-
-                if isinstance(raw_body, str):
-
-                    body = json.loads(
-                        raw_body
-                    )
-
-                else:
-
-                    body = raw_body
-
-            else:
-
-                body = event
-
-
-            return insert_record(body)
-
-
-        # Unsupported method
-
-        return respond(
-            405,
-            {
-                "error":
-                    f"Method {method} not allowed."
-            }
-        )
-
-
-    except Exception as e:
-
-        print("ERROR:")
-        print(type(e).__name__)
-        print(str(e))
-
-
-        return respond(
-            500,
-            {
-                "error":
-                    str(e)
-            }
-        )
+        setStatus(searchStatus, `${records.length} record(s) loaded.`, "ok");
+      } catch (err) {
+        console.error(err);
+        setStatus(searchStatus, "Error: " + err.message, "error");
+      } finally {
+        searchButton.disabled = false;
+      }
+    }
+
+    addForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+
+      const body = {
+        date_of_occurence: document.getElementById("date_of_occurence").value.trim(),
+        description: document.getElementById("description").value.trim(),
+        amt_due: document.getElementById("amt_due").value.trim(),
+        payee_comments: document.getElementById("payee_comments").value.trim(),
+        payer_comments: document.getElementById("payer_comments").value.trim()
+      };
+
+      if (!body.date_of_occurence || !body.description) {
+        setStatus(addStatus, "Date of occurrence and description are required.", "error");
+        return;
+      }
+
+      addButton.disabled = true;
+      setStatus(addStatus, "Saving (Athena inserts can take several seconds)...");
+
+      try {
+        const response = await fetch(API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        await readResponse(response);
+
+        setStatus(addStatus, "Record added.", "ok");
+        addForm.reset();
+        loadRecords();
+      } catch (err) {
+        console.error(err);
+        setStatus(addStatus, "Error: " + err.message, "error");
+      } finally {
+        addButton.disabled = false;
+      }
+    });
+
+    searchForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      loadRecords();
+    });
+
+    loadRecords();
+  </script>
+
+</body>
+</html>
