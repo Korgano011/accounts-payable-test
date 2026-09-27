@@ -1,437 +1,448 @@
-<html>
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Our Accounts Payable Table</title>
+import boto3
+import time
+import json
+import os
 
-<!-- jsPDF builds the PDF in the browser; autotable draws the records table -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 
-<style>
-body{
-    font-family: Arial, Helvetica, sans-serif;
-    width:600px;
-    margin:40px auto;
+athena = boto3.client("athena")
+
+DATABASE = "accountspayable"
+TABLE = "accounts_payable"
+WORKGROUP = "primary"
+
+RESULTS = os.environ.get(
+    "RESULTS",
+    "s3://publictables/practice/"
+)
+
+MAX_LEN = 500
+MAX_ROWS = 500
+
+
+HEADERS = {
+    "Content-Type": "application/json",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS"
 }
 
-a{
-    display:block;
-    margin-top:20px;
-    color:blue;
-    font-size:18px;
-}
 
-input{
-    width:50%;
-    padding:10px;
-    margin-bottom:10px;
-    font-size:16px;
-}
+def respond(status_code, body):
 
-button{
-    padding:10px 20px;
-    font-size:16px;
-    cursor:pointer;
-}
-
-button:disabled{
-    cursor:not-allowed;
-}
-
-#result, #recordsStatus{
-    margin-top:20px;
-    font-weight:bold;
-}
-
-hr{
-    margin:30px 0;
-}
-
-table{
-    width:100%;
-    border-collapse:collapse;
-    margin-top:10px;
-    background:#ffffff;
-}
-
-th, td{
-    border:1px solid #b2bec3;
-    padding:8px;
-    text-align:left;
-    vertical-align:top;
-}
-
-th{
-    background:#b2bec3;
-}
-</style>
-</head>
-
-<body bgcolor="#dfe6e9">
-
-<h2>Our Accounts Payable Table</h2>
-
-<label>Date of Occurrence</label>
-<br>
-<input type="date" id="date_of_occurrence">
-<br>
-
-<label>Description</label>
-<br>
-<input type="text" id="desc">
-<br>
-
-<label>Amount Due</label>
-<br>
-<input type="number" id="amt_due" step="0.01" placeholder="0.00">
-<br>
-
-<label>Payee Comments</label>
-<br>
-<input type="text" id="payee_comments">
-<br>
-
-<label>Payer Comments</label>
-<br>
-<input type="text" id="payer_comments">
-<br>
-
-<button onclick="saveRecord()">Submit</button>
-
-<div id="result"></div>
-
-<hr>
-
-<h2>Records</h2>
-
-<input type="text" id="search" placeholder="Search description">
-<button onclick="loadRecords()">Search</button>
-<button id="pdfButton" onclick="savePdf()" disabled>Save as PDF</button>
-
-<div id="recordsStatus"></div>
-
-<table id="records">
-    <thead>
-        <tr>
-            <th>Date of Occurrence</th>
-            <th>Description</th>
-            <th>Amount Due</th>
-            <th>Payee Comments</th>
-            <th>Payer Comments</th>
-        </tr>
-    </thead>
-
-    <tbody></tbody>
-</table>
-
-<script>
-
-const API_URL =
-"https://e9beemph6k.execute-api.us-east-1.amazonaws.com/default/acctPayableTest";
-
-// Records from the last successful fetch
-let lastRecords = [];
-let lastSearch = "";
-
-async function saveRecord(){
-
-    const date_of_occurrence =
-        document.getElementById("date_of_occurrence").value.trim();
-
-    const desc =
-        document.getElementById("desc").value.trim();
-
-    const amt_due =
-        document.getElementById("amt_due").value.trim();
-
-    const payee_comments =
-        document.getElementById("payee_comments").value.trim();
-
-    const payer_comments =
-        document.getElementById("payer_comments").value.trim();
-
-    const resultDiv = document.getElementById("result");
-
-    // Validate required fields
-    if (!date_of_occurrence || !desc || !amt_due) {
-        resultDiv.innerHTML =
-            "Please enter the date, description, and amount due.";
-        return;
+    return {
+        "statusCode": status_code,
+        "headers": HEADERS,
+        "body": json.dumps(body)
     }
 
-    try {
 
-        const response = await fetch(API_URL, {
-            method: "POST",
+def sql_string(value):
 
-            headers: {
-                "Content-Type": "application/json"
-            },
+    return "'" + str(value).replace("'", "''") + "'"
 
-            body: JSON.stringify({
-                date_of_occurrence: date_of_occurrence,
-                description: desc,
-                amt_due: amt_due,
-                payee_comments: payee_comments,
-                payer_comments: payer_comments
-            })
-        });
 
-        const result = await response.json();
+def run_query(query):
 
-        if (!response.ok) {
-            throw new Error(
-                result.error || "Unable to save record"
-            );
+    print("Running Athena query:")
+    print(query)
+
+    response = athena.start_query_execution(
+        QueryString=query,
+
+        QueryExecutionContext={
+            "Database": DATABASE
+        },
+
+        WorkGroup=WORKGROUP,
+
+        ResultConfiguration={
+            "OutputLocation": RESULTS
         }
+    )
 
-        resultDiv.innerHTML =
-            "Status: " + (result.Status || "Record saved successfully");
+    query_id = response["QueryExecutionId"]
 
-        // Clear form
-        document.getElementById("date_of_occurrence").value = "";
-        document.getElementById("desc").value = "";
-        document.getElementById("amt_due").value = "";
-        document.getElementById("payee_comments").value = "";
-        document.getElementById("payer_comments").value = "";
+    while True:
 
-        document.getElementById("date_of_occurrence").focus();
+        result = athena.get_query_execution(
+            QueryExecutionId=query_id
+        )
 
-        // Refresh records
-        loadRecords();
+        status_info = result["QueryExecution"]["Status"]
+        state = status_info["State"]
 
-    } catch (error) {
+        if state in (
+            "SUCCEEDED",
+            "FAILED",
+            "CANCELLED"
+        ):
 
-        console.error(error);
-        resultDiv.innerHTML =
-            "Error: " + error.message;
-    }
-}
+            if state != "SUCCEEDED":
 
+                reason = status_info.get(
+                    "StateChangeReason",
+                    state
+                )
 
-async function loadRecords(){
+                print("Athena error:")
+                print(reason)
 
-    const search =
-        document.getElementById("search").value.trim();
+                raise RuntimeError(reason)
 
-    const statusDiv =
-        document.getElementById("recordsStatus");
+            return query_id
 
-    const tbody =
-        document.querySelector("#records tbody");
-
-    const pdfButton =
-        document.getElementById("pdfButton");
-
-    statusDiv.innerHTML = "Loading...";
-    pdfButton.disabled = true;
-
-    try {
-
-        const url = search
-            ? API_URL + "?search=" + encodeURIComponent(search)
-            : API_URL;
-
-        const response = await fetch(url);
-
-        const result = await response.json();
-
-        if (!response.ok) {
-            throw new Error(
-                result.error || "Unable to load records"
-            );
-        }
-
-        if (!Array.isArray(result.records)) {
-            throw new Error(
-                "The API response does not contain a records array."
-            );
-        }
-
-        tbody.innerHTML = "";
-
-        for (const record of result.records) {
-
-            const row = document.createElement("tr");
-
-            const dateCell = document.createElement("td");
-            dateCell.textContent =
-                record.date_of_occurrence || "";
-
-            const descCell = document.createElement("td");
-            descCell.textContent =
-                record.description || "";
-
-            const amountCell = document.createElement("td");
-            amountCell.textContent =
-                record.amt_due || "";
-
-            const payeeCell = document.createElement("td");
-            payeeCell.textContent =
-                record.payee_comments || "";
-
-            const payerCell = document.createElement("td");
-            payerCell.textContent =
-                record.payer_comments || "";
-
-            row.appendChild(dateCell);
-            row.appendChild(descCell);
-            row.appendChild(amountCell);
-            row.appendChild(payeeCell);
-            row.appendChild(payerCell);
-
-            tbody.appendChild(row);
-        }
-
-        statusDiv.innerHTML =
-            result.records.length + " record(s) found";
-
-        // Remember what was fetched for the PDF
-        lastRecords = result.records;
-        lastSearch = search;
-
-        pdfButton.disabled =
-            lastRecords.length === 0;
-
-    } catch (error) {
-
-        console.error(error);
-
-        statusDiv.innerHTML =
-            "Error: " + error.message;
-
-    }
-}
+        time.sleep(0.5)
 
 
-function savePdf(){
+def insert_record(body):
 
-    const statusDiv =
-        document.getElementById("recordsStatus");
+    date_of_occurence = (
+        body.get("date_of_occurence") or ""
+    ).strip()
 
-    if (lastRecords.length === 0) {
-        statusDiv.innerHTML =
-            "There are no records to save.";
-        return;
-    }
+    description = (
+        body.get("description") or ""
+    ).strip()
 
-    try {
+    amt_due_raw = body.get("amt_due")
 
-        const { jsPDF } = window.jspdf;
+    payee_comments = (
+        body.get("payee_comments") or ""
+    ).strip()
 
-        const doc = new jsPDF({
-            orientation: "landscape"
-        });
+    payer_comments = (
+        body.get("payer_comments") or ""
+    ).strip()
 
-        const now = new Date();
 
-        // Heading
-        doc.setFontSize(16);
+    # Required fields
 
-        doc.text(
-            "Accounts Payable - Records",
-            14,
-            18
-        );
+    if not date_of_occurence or not description:
 
-        doc.setFontSize(10);
-
-        doc.text(
-            "Created: " + now.toLocaleString(),
-            14,
-            26
-        );
-
-        doc.text(
-            "Search: " + (lastSearch || "(all records)"),
-            14,
-            32
-        );
-
-        doc.text(
-            lastRecords.length + " record(s)",
-            14,
-            38
-        );
-
-        // Records table
-        doc.autoTable({
-
-            startY: 44,
-
-            head: [[
-                "Date of Occurrence",
-                "Description",
-                "Amount Due",
-                "Payee Comments",
-                "Payer Comments"
-            ]],
-
-            body: lastRecords.map(record => [
-
-                record.date_of_occurrence || "",
-
-                record.description || "",
-
-                record.amt_due || "",
-
-                record.payee_comments || "",
-
-                record.payer_comments || ""
-
-            ]),
-
-            styles: {
-                fontSize: 9,
-                cellPadding: 3,
-                overflow: "linebreak"
-            },
-
-            headStyles: {
-                fillColor: [178, 190, 195],
-                textColor: 0
-            },
-
-            columnStyles: {
-                0: { cellWidth: 32 },
-                1: { cellWidth: 55 },
-                2: { cellWidth: 28 },
-                3: { cellWidth: 65 },
-                4: { cellWidth: 65 }
+        return respond(
+            400,
+            {
+                "error":
+                    "Date of occurrence and description are required."
             }
-        });
-
-        // File name
-        const fileDate =
-            now.getFullYear() + "-" +
-            String(now.getMonth() + 1).padStart(2, "0") + "-" +
-            String(now.getDate()).padStart(2, "0");
-
-        doc.save(
-            "accounts_payable_" +
-            fileDate +
-            ".pdf"
-        );
-
-    } catch (error) {
-
-        console.error(error);
-
-        statusDiv.innerHTML =
-            "Error creating PDF: " + error.message;
-    }
-}
+        )
 
 
-// Load records when page opens
-loadRecords();
+    # Validate length
 
-</script>
+    if len(date_of_occurence) > MAX_LEN:
 
-<a href="https://main.d3aa0oh4rm4fbf.amplifyapp.com/">
-    Return to home page
-</a>
+        return respond(
+            400,
+            {
+                "error":
+                    f"Date of occurrence must be "
+                    f"{MAX_LEN} characters or less."
+            }
+        )
 
-</body>
-</html>
+
+    if len(description) > MAX_LEN:
+
+        return respond(
+            400,
+            {
+                "error":
+                    f"Description must be "
+                    f"{MAX_LEN} characters or less."
+            }
+        )
+
+
+    # Validate amount
+
+    try:
+
+        if amt_due_raw in (
+            None,
+            ""
+        ):
+            amt_due = 0.0
+
+        else:
+            amt_due = float(amt_due_raw)
+
+    except (TypeError, ValueError):
+
+        return respond(
+            400,
+            {
+                "error":
+                    "Amount Due must be a valid number."
+            }
+        )
+
+
+    query = f"""
+    INSERT INTO {TABLE}
+    (
+        date_of_occurence,
+        description,
+        amt_due,
+        payee_comments,
+        payer_comments
+    )
+    VALUES
+    (
+        {sql_string(date_of_occurence)},
+        {sql_string(description)},
+        {amt_due},
+        {sql_string(payee_comments)},
+        {sql_string(payer_comments)}
+    )
+    """
+
+
+    query_id = run_query(query)
+
+
+    return respond(
+        200,
+        {
+            "QueryExecutionId": query_id,
+            "Status": "SUCCEEDED"
+        }
+    )
+
+
+def get_records(params):
+
+    search = (
+        params.get("search") or ""
+    ).strip()[:MAX_LEN]
+
+
+    query = f"""
+    SELECT
+        date_of_occurence,
+        description,
+        amt_due,
+        payee_comments,
+        payer_comments
+    FROM {TABLE}
+    """
+
+
+    if search:
+
+        pattern = "%" + search.lower() + "%"
+
+        query += f"""
+        WHERE lower(CAST(date_of_occurence AS VARCHAR))
+              LIKE {sql_string(pattern)}
+
+           OR lower(CAST(description AS VARCHAR))
+              LIKE {sql_string(pattern)}
+        """
+
+
+    query += f"""
+    ORDER BY date_of_occurence
+    LIMIT {MAX_ROWS}
+    """
+
+
+    query_id = run_query(query)
+
+
+    records = []
+
+
+    paginator = athena.get_paginator(
+        "get_query_results"
+    )
+
+
+    first_page = True
+
+
+    for page in paginator.paginate(
+        QueryExecutionId=query_id
+    ):
+
+        rows = page["ResultSet"]["Rows"]
+
+
+        if first_page:
+
+            rows = rows[1:]
+            first_page = False
+
+
+        for row in rows:
+
+            data = row.get("Data", [])
+
+
+            def get_value(index):
+
+                if index >= len(data):
+                    return ""
+
+                return data[index].get(
+                    "VarCharValue",
+                    ""
+                )
+
+
+            date_value = get_value(0)
+            description_value = get_value(1)
+            amount_value = get_value(2)
+            payee_value = get_value(3)
+            payer_value = get_value(4)
+
+
+            try:
+
+                amount = float(
+                    amount_value or 0
+                )
+
+            except (TypeError, ValueError):
+
+                amount = 0.0
+
+
+            records.append({
+
+                "date_of_occurence":
+                    date_value,
+
+                "description":
+                    description_value,
+
+                "amt_due":
+                    amount,
+
+                "payee_comments":
+                    payee_value,
+
+                "payer_comments":
+                    payer_value
+            })
+
+
+    return respond(
+        200,
+        {
+            "records": records
+        }
+    )
+
+
+def lambda_handler(event, context):
+
+    print("EVENT:")
+    print(json.dumps(event))
+
+
+    # Determine HTTP method
+
+    method = (
+        event
+        .get("requestContext", {})
+        .get("http", {})
+        .get("method")
+    )
+
+
+    # Fallback for older API Gateway events
+
+    if not method:
+
+        method = event.get(
+            "httpMethod",
+            "POST"
+        )
+
+
+    method = method.upper()
+
+
+    print("HTTP METHOD:", method)
+
+
+    # CORS preflight
+
+    if method == "OPTIONS":
+
+        return respond(
+            204,
+            {}
+        )
+
+
+    try:
+
+        # GET records
+
+        if method == "GET":
+
+            params = (
+                event.get(
+                    "queryStringParameters"
+                ) or {}
+            )
+
+            return get_records(params)
+
+
+        # POST new record
+
+        if method == "POST":
+
+            raw_body = event.get(
+                "body"
+            )
+
+
+            if raw_body:
+
+                if isinstance(raw_body, str):
+
+                    body = json.loads(
+                        raw_body
+                    )
+
+                else:
+
+                    body = raw_body
+
+            else:
+
+                body = event
+
+
+            return insert_record(body)
+
+
+        # Unsupported method
+
+        return respond(
+            405,
+            {
+                "error":
+                    f"Method {method} not allowed."
+            }
+        )
+
+
+    except Exception as e:
+
+        print("ERROR:")
+        print(type(e).__name__)
+        print(str(e))
+
+
+        return respond(
+            500,
+            {
+                "error":
+                    str(e)
+            }
+        )
