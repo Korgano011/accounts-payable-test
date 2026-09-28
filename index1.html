@@ -108,7 +108,7 @@
         <input type="text" id="search" name="search" maxlength="500">
       </div>
       <button type="submit" id="searchButton">Search</button>
-      <button type="button" id="saveButton" disabled>Save Pdf</button>
+      <button type="button" id="saveButton" disabled>Save PDF</button>
     </form>
     <div id="searchStatus" class="status"></div>
 
@@ -135,6 +135,9 @@
     </div>
   </section>
 
+  <!-- jsPDF + AutoTable build the PDF download in the browser -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
   <script>
     const API_URL = "https://4g3cy4kmdc.execute-api.us-east-1.amazonaws.com/default/acctPayableTest";
 
@@ -176,31 +179,43 @@
       return cents / 100;
     }
 
-    // Quotes a value for CSV, doubling any embedded quotes
-    function csvCell(value) {
-      return '"' + String(value ?? "").replace(/"/g, '""') + '"';
-    }
-
+    // Builds a PDF of the table (including the total row) and downloads it
     function saveRecords() {
-      const header = ["Date", "Description", "Amount Due", "Payee Comments", "Payer Comments"];
-      const rows = currentRecords.map(r => [
-        r.date_of_occurence,
-        r.description,
-        (Number(r.amt_due) || 0).toFixed(2),
-        r.payee_comments,
-        r.payer_comments
-      ]);
-      rows.push(["Total", "", sumAmounts(currentRecords).toFixed(2), "", ""]);
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "letter" });
+      const today = new Date().toISOString().slice(0, 10);
+      const search = document.getElementById("search").value.trim();
 
-      const csv = [header, ...rows].map(row => row.map(csvCell).join(",")).join("\r\n");
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
-      link.download = `accounts-payable-${new Date().toISOString().slice(0, 10)}.csv`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(link.href);
+      doc.setFontSize(16);
+      doc.text("Accounts Payable", 40, 40);
+      doc.setFontSize(10);
+      doc.text(`Generated ${today}` + (search ? `  |  Search: ${search}` : ""), 40, 58);
+
+      doc.autoTable({
+        startY: 72,
+        head: [["Date", "Description", "Amount Due", "Payee Comments", "Payer Comments"]],
+        body: currentRecords.map(r => [
+          r.date_of_occurence ?? "",
+          r.description ?? "",
+          formatAmount(r.amt_due),
+          r.payee_comments ?? "",
+          r.payer_comments ?? ""
+        ]),
+        foot: [["Total", "", formatAmount(sumAmounts(currentRecords)), "", ""]],
+        showFoot: "lastPage",
+        styles: { fontSize: 9, cellPadding: 5, overflow: "linebreak" },
+        headStyles: { fillColor: [37, 99, 235] },
+        footStyles: { fillColor: [240, 240, 242], textColor: 20, fontStyle: "bold" },
+        columnStyles: {
+          0: { cellWidth: 70 },
+          2: { halign: "right", cellWidth: 80 }
+        },
+        didParseCell: data => {
+          if (data.section !== "body" && data.column.index === 2) data.cell.styles.halign = "right";
+        }
+      });
+
+      doc.save(`accounts-payable-${today}.pdf`);
     }
 
     // Reads the response body and throws with the Lambda's error message on failure
