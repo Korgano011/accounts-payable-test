@@ -63,6 +63,14 @@
     }
     th { background: #f0f0f2; }
     td.amount, th.amount { text-align: right; white-space: nowrap; }
+    tfoot td {
+      font-weight: 700;
+      border-top: 2px solid #999;
+      border-bottom: none;
+      background: #f0f0f2;
+    }
+    #saveButton { background: #15803d; }
+    #saveButton:disabled { background: #9cc5aa; cursor: not-allowed; }
   </style>
 </head>
 <body>
@@ -100,6 +108,7 @@
         <input type="text" id="search" name="search" maxlength="500">
       </div>
       <button type="submit" id="searchButton">Search</button>
+      <button type="button" id="saveButton" disabled>Save</button>
     </form>
     <div id="searchStatus" class="status"></div>
 
@@ -115,6 +124,13 @@
           </tr>
         </thead>
         <tbody id="recordsBody"></tbody>
+        <tfoot>
+          <tr>
+            <td colspan="2">Total</td>
+            <td class="amount" id="totalAmount">$0.00</td>
+            <td colspan="2"></td>
+          </tr>
+        </tfoot>
       </table>
     </div>
   </section>
@@ -127,8 +143,13 @@
     const addStatus = document.getElementById("addStatus");
     const searchForm = document.getElementById("searchForm");
     const searchButton = document.getElementById("searchButton");
+    const saveButton = document.getElementById("saveButton");
     const searchStatus = document.getElementById("searchStatus");
     const recordsBody = document.getElementById("recordsBody");
+    const totalAmount = document.getElementById("totalAmount");
+
+    // Records currently shown in the table, used by the Save button
+    let currentRecords = [];
 
     function setStatus(el, message, type) {
       el.textContent = message;
@@ -147,6 +168,39 @@
     function formatAmount(value) {
       const num = Number(value) || 0;
       return num.toLocaleString("en-US", { style: "currency", currency: "USD" });
+    }
+
+    // Sums in cents to avoid floating point drift (e.g. 0.1 + 0.2)
+    function sumAmounts(records) {
+      const cents = records.reduce((total, r) => total + Math.round((Number(r.amt_due) || 0) * 100), 0);
+      return cents / 100;
+    }
+
+    // Quotes a value for CSV, doubling any embedded quotes
+    function csvCell(value) {
+      return '"' + String(value ?? "").replace(/"/g, '""') + '"';
+    }
+
+    function saveRecords() {
+      const header = ["Date", "Description", "Amount Due", "Payee Comments", "Payer Comments"];
+      const rows = currentRecords.map(r => [
+        r.date_of_occurence,
+        r.description,
+        (Number(r.amt_due) || 0).toFixed(2),
+        r.payee_comments,
+        r.payer_comments
+      ]);
+      rows.push(["Total", "", sumAmounts(currentRecords).toFixed(2), "", ""]);
+
+      const csv = [header, ...rows].map(row => row.map(csvCell).join(",")).join("\r\n");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `accounts-payable-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(link.href);
     }
 
     // Reads the response body and throws with the Lambda's error message on failure
@@ -168,12 +222,14 @@
       const url = search ? `${API_URL}?search=${encodeURIComponent(search)}` : API_URL;
 
       searchButton.disabled = true;
+      saveButton.disabled = true;
       setStatus(searchStatus, "Loading records (Athena can take a few seconds)...");
 
       try {
         const response = await fetch(url, { method: "GET" });
         const data = await readResponse(response);
         const records = data.records || [];
+        currentRecords = records;
 
         if (records.length === 0) {
           recordsBody.innerHTML = '<tr><td colspan="5">No records found.</td></tr>';
@@ -189,9 +245,13 @@
           `).join("");
         }
 
+        totalAmount.textContent = formatAmount(sumAmounts(records));
+        saveButton.disabled = records.length === 0;
         setStatus(searchStatus, `${records.length} record(s) loaded.`, "ok");
       } catch (err) {
         console.error(err);
+        currentRecords = [];
+        totalAmount.textContent = formatAmount(0);
         setStatus(searchStatus, "Error: " + err.message, "error");
       } finally {
         searchButton.disabled = false;
@@ -240,6 +300,8 @@
       event.preventDefault();
       loadRecords();
     });
+
+    saveButton.addEventListener("click", saveRecords);
 
     loadRecords();
   </script>
