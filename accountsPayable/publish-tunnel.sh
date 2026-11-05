@@ -1,6 +1,6 @@
 #!/bin/zsh
 # Starts the Accounts Payable site and its Cloudflare quick tunnel, then sends the
-# tunnel's current address to GitHub (api.json) so the GitHub Pages and Amplify
+# tunnel's current address to GitHub (accountsPayable/api.json) so the GitHub Pages and Amplify
 # copies of the pages can reach Cassandra on this Mac.
 # Run it after every Mac or Docker restart:  ./publish-tunnel.sh
 set -e
@@ -23,15 +23,15 @@ fi
 echo "Tunnel: $URL"
 
 JSON="{\"api\": \"$URL/accounts_payable\"}"
-CURRENT=$(gh api "repos/$REPO/contents/api.json" -q .content 2>/dev/null | base64 -d 2>/dev/null || true)
+CURRENT=$(gh api "repos/$REPO/contents/accountsPayable/api.json" -q .content 2>/dev/null | base64 -d 2>/dev/null || true)
 if [ "$CURRENT" = "$JSON" ]; then
   echo "GitHub already has this address. Nothing to update."
   exit 0
 fi
 
-SHA=$(gh api "repos/$REPO/contents/api.json" -q .sha 2>/dev/null || true)
-args=(-X PUT "repos/$REPO/contents/api.json" -f message="Update tunnel address" -f content="$(printf '%s' "$JSON" | base64)")
+SHA=$(gh api "repos/$REPO/contents/accountsPayable/api.json" -q .sha 2>/dev/null || true)
+args=(-X PUT "repos/$REPO/contents/accountsPayable/api.json" -f message="Update tunnel address" -f content="$(printf '%s' "$JSON" | base64)")
 [ -n "$SHA" ] && args+=(-f sha="$SHA")
 gh api "${args[@]}" --silent
 echo "Sent to GitHub. The GitHub Pages site picks it up in about a minute."
-echo "Pages: https://korgano011.github.io/"
+echo "Pages: https://korgano011.github.io/accounts-payable-test/accountsPayable/index.html"

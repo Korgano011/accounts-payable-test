@@ -5,7 +5,7 @@
 </head>
 <body>
 <h3>
-<a href="/">Back to home page</a>
+<a href="index.html">Back to home page</a>
 </h3>
 
 <h2>Add a row</h2>

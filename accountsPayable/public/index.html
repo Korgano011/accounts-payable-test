@@ -27,7 +27,7 @@ const SAME_SERVER = ['localhost', '127.0.0.1'].includes(location.hostname)
   || location.hostname.endsWith('.trycloudflare.com');
 let API = '/accounts_payable';
 const apiReady = SAME_SERVER ? Promise.resolve() :
-  fetch('../../api.json?t=' + Date.now(), { cache: 'no-store' })
+  fetch('../api.json?t=' + Date.now(), { cache: 'no-store' })
     .then(r => r.json())
     .then(c => { API = c.api; })
     .catch(() => { API = 'the tunnel (address not published yet)'; });
