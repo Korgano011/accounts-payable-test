@@ -38,6 +38,13 @@ Search: <input type="text" id="search" placeholder="Filter by any column">
     <tr><th>Date</th><th>Description</th><th>Amount Due</th><th>Payee Comments</th><th>Payer Comments</th><th></th></tr>
   </thead>
   <tbody id="rows"></tbody>
+<tfoot>
+  <tr>
+    <th colspan="2" style="text-align:right;">TOTAL:</th>
+    <th id="totalAmount">0.00</th>
+    <th colspan="3"></th>
+  </tr>
+</tfoot>
 </table>
 
 <script>
@@ -103,6 +110,14 @@ function renderTable() {
     buttonCell.appendChild(deleteButton);
     tr.appendChild(buttonCell);
     list.appendChild(tr);
+  // Calculate total of all displayed (filtered) rows
+  const total = currentRows
+    .filter(row =>
+      COLS.some(c => show(row, c).toLowerCase().includes(search))
+    )
+    .reduce((sum, row) => sum + (Number(row.amt_due) || 0), 0);
+
+  document.getElementById('totalAmount').textContent = total.toFixed(2);
   });
 }
 
