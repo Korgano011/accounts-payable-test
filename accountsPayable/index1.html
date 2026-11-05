@@ -41,10 +41,12 @@ Search: <input type="text" id="search" placeholder="Filter by any column">
 </table>
 
 <script>
-// On GitHub Pages the data comes from Cassandra on the Mac through the ngrok tunnel.
-const API = location.hostname.endsWith('github.io')
-  ? 'https://caliber-kooky-alive.ngrok-free.dev/accounts_payable'
-  : '/accounts_payable';
+// On the Mac (localhost) or the ngrok site, nginx is right here. Anywhere else
+// (GitHub Pages, Amplify) the data comes from Cassandra on the Mac through ngrok.
+const SAME_SERVER = ['localhost', '127.0.0.1', 'caliber-kooky-alive.ngrok-free.dev'].includes(location.hostname);
+const API = SAME_SERVER
+  ? '/accounts_payable'
+  : 'https://caliber-kooky-alive.ngrok-free.dev/accounts_payable';
 
 // Every call adds a header that skips ngrok's free-plan warning page
 function apiFetch(url, opts = {}) {
