@@ -20,7 +20,10 @@ Search: <input type="text" id="search" placeholder="Filter by any column">
 
 <script>
 // Read-only view: this page (and the public server behind it) only allows GET.
-const API = '/accounts_payable';
+// On GitHub Pages the data comes from Cassandra on the Mac through the ngrok tunnel.
+const API = location.hostname.endsWith('github.io')
+  ? 'https://caliber-kooky-alive.ngrok-free.dev/accounts_payable'
+  : '/accounts_payable';
 const COLS = ['date', 'description', 'amt_due', 'payee_comms', 'payer_comms'];
 const HEADERS = ['Date', 'Description', 'Amount Due', 'Payee Comments', 'Payer Comments'];
 let currentRows = [];
@@ -34,7 +37,8 @@ function show(row, c) {
 
 async function loadRows() {
   try {
-    const res = await fetch(API);
+    // The header skips ngrok's free-plan warning page so the JSON comes through
+    const res = await fetch(API, { headers: { 'ngrok-skip-browser-warning': '1' } });
     const data = await res.json();
     if (!res.ok) { document.getElementById('status').textContent = 'Error: ' + data.error; return; }
     currentRows = data.sort((a, b) => String(a.date).localeCompare(String(b.date)));
