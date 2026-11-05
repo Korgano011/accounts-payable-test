@@ -41,7 +41,15 @@ Search: <input type="text" id="search" placeholder="Filter by any column">
 </table>
 
 <script>
-const API = '/accounts_payable';
+// On GitHub Pages the data comes from Cassandra on the Mac through the ngrok tunnel.
+const API = location.hostname.endsWith('github.io')
+  ? 'https://caliber-kooky-alive.ngrok-free.dev/accounts_payable'
+  : '/accounts_payable';
+
+// Every call adds a header that skips ngrok's free-plan warning page
+function apiFetch(url, opts = {}) {
+  return fetch(url, { ...opts, headers: { ...(opts.headers || {}), 'ngrok-skip-browser-warning': '1' } });
+}
 const COLS = ['date', 'description', 'amt_due', 'payee_comms', 'payer_comms'];
 const HEADERS = ['Date', 'Description', 'Amount Due', 'Payee Comments', 'Payer Comments'];
 let currentRows = [];
@@ -59,7 +67,7 @@ function show(row, c) {
 
 async function loadRows() {
   try {
-    const res = await fetch(API);
+    const res = await apiFetch(API);
     const data = await res.json();
     if (!res.ok) { setStatus('Error: ' + data.error); return; }
     currentRows = data.sort((a, b) => String(a.date).localeCompare(String(b.date)));
@@ -125,7 +133,7 @@ function editRow(tr, row) {
 }
 
 async function updateRow(oldDate, row) {
-  const res = await fetch(API + '/' + encodeURIComponent(oldDate), {
+  const res = await apiFetch(API + '/' + encodeURIComponent(oldDate), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(row)
@@ -136,7 +144,7 @@ async function updateRow(oldDate, row) {
 }
 
 async function deleteRow(date) {
-  const res = await fetch(API + '/' + encodeURIComponent(date), { method: 'DELETE' });
+  const res = await apiFetch(API + '/' + encodeURIComponent(date), { method: 'DELETE' });
   const data = await res.json();
   setStatus(res.ok ? 'Deleted ' + date : 'Error: ' + data.error);
   loadRows();
@@ -146,7 +154,7 @@ document.getElementById('search').addEventListener('input', renderTable);
 
 document.getElementById('deleteAll').addEventListener('click', async () => {
   if (!confirm('Delete every row in the table?')) return;
-  const res = await fetch(API, { method: 'DELETE' });
+  const res = await apiFetch(API, { method: 'DELETE' });
   const data = await res.json();
   setStatus(res.ok ? 'Deleted all rows' : 'Error: ' + data.error);
   loadRows();
@@ -168,7 +176,7 @@ document.getElementById('addForm').addEventListener('submit', async (e) => {
   const row = {};
   COLS.forEach(c => row[c] = document.getElementById(c).value);
   try {
-    const res = await fetch(API, {
+    const res = await apiFetch(API, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(row)

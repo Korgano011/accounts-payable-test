@@ -1,327 +1,196 @@
-<!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Accounts Payable Test</title>
-  <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      max-width: 960px;
-      margin: 0 auto;
-      padding: 16px;
-      background: #f7f7f8;
-      color: #222;
-    }
-    h1 { font-size: 1.6rem; }
-    h2 { font-size: 1.2rem; margin-top: 0; }
-    section {
-      background: #fff;
-      border: 1px solid #ddd;
-      border-radius: 8px;
-      padding: 16px;
-      margin-bottom: 20px;
-    }
-    label {
-      display: block;
-      font-weight: 600;
-      margin: 10px 0 4px;
-    }
-    input, textarea {
-      width: 100%;
-      box-sizing: border-box;
-      padding: 8px;
-      font: inherit;
-      border: 1px solid #bbb;
-      border-radius: 4px;
-    }
-    textarea { min-height: 60px; resize: vertical; }
-    button {
-      margin-top: 12px;
-      padding: 8px 16px;
-      font: inherit;
-      border: none;
-      border-radius: 4px;
-      background: #2563eb;
-      color: #fff;
-      cursor: pointer;
-    }
-    button:disabled { background: #93a4c8; cursor: wait; }
-    .search-row { display: flex; gap: 8px; align-items: flex-end; }
-    .search-row input { flex: 1; }
-    .search-row button { margin-top: 0; }
-    .status { margin-top: 10px; min-height: 1.2em; }
-    .status.error { color: #b91c1c; }
-    .status.ok { color: #15803d; }
-    .table-wrap { overflow-x: auto; }
-    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
-    th, td {
-      border-bottom: 1px solid #e5e5e5;
-      padding: 8px;
-      text-align: left;
-      vertical-align: top;
-    }
-    th { background: #f0f0f2; }
-    td.amount, th.amount { text-align: right; white-space: nowrap; }
-    tfoot td {
-      font-weight: 700;
-      border-top: 2px solid #999;
-      border-bottom: none;
-      background: #f0f0f2;
-    }
-    #saveButton { background: #15803d; }
-    #saveButton:disabled { background: #9cc5aa; cursor: not-allowed; }
-  </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 </head>
 <body>
+<h3>
+<a href="/">Back to home page</a>
+</h3>
 
-  <h1>Accounts Payable Test</h1>
+<h2>Add a row</h2>
+<form id="addForm">
+<label for="date">Date</label>
+<input type="date" id="date" name="date" required>
+<br><br>
+Description: <input type="text" id="description" required>
+<br><br>
+Amount Due: <input type="number" step="0.01" id="amt_due" required>
+<br><br>
+Payee Comments: <input type="text" id="payee_comms">
+<br><br>
+Payer Comments: <input type="text" id="payer_comms">
+<br><br>
+<button type="submit">Save</button>
+</form>
+<p id="status"></p>
 
-  <section>
-    <h2>Add a Record</h2>
-    <form id="addForm">
-      <label for="date_of_occurence">Date of Occurrence *</label>
-      <input type="date" id="date_of_occurence" name="date_of_occurence" required>
+<h2>Accounts Payable Table</h2>
+<button id="savePdf">Save table as PDF</button>
+<br><br>
+<button id="deleteAll">Delete whole table</button>
 
-      <label for="description">Description *</label>
-      <input type="text" id="description" name="description" maxlength="500" required>
+<br><br>
+Search: <input type="text" id="search" placeholder="Filter by any column">
+<br><br>
+<table border="1">
+  <thead>
+    <tr><th>Date</th><th>Description</th><th>Amount Due</th><th>Payee Comments</th><th>Payer Comments</th><th></th></tr>
+  </thead>
+  <tbody id="rows"></tbody>
+</table>
 
-      <label for="amt_due">Amount Due</label>
-      <input type="number" id="amt_due" name="amt_due" step="0.01" placeholder="0.00">
+<script>
+// On GitHub Pages the data comes from Cassandra on the Mac through the ngrok tunnel.
+const API = location.hostname.endsWith('github.io')
+  ? 'https://caliber-kooky-alive.ngrok-free.dev/accounts_payable'
+  : '/accounts_payable';
 
-      <label for="payee_comments">Payee Comments</label>
-      <textarea id="payee_comments" name="payee_comments" maxlength="500"></textarea>
+// Every call adds a header that skips ngrok's free-plan warning page
+function apiFetch(url, opts = {}) {
+  return fetch(url, { ...opts, headers: { ...(opts.headers || {}), 'ngrok-skip-browser-warning': '1' } });
+}
+const COLS = ['date', 'description', 'amt_due', 'payee_comms', 'payer_comms'];
+const HEADERS = ['Date', 'Description', 'Amount Due', 'Payee Comments', 'Payer Comments'];
+let currentRows = [];
 
-      <label for="payer_comments">Payer Comments</label>
-      <textarea id="payer_comments" name="payer_comments" maxlength="500"></textarea>
+function setStatus(text) {
+  document.getElementById('status').textContent = text;
+}
 
-      <button type="submit" id="addButton">Add Record</button>
-      <div id="addStatus" class="status"></div>
-    </form>
-  </section>
+function show(row, c) {
+  const v = row[c];
+  if (v === null || v === undefined) return '';
+  if (c === 'amt_due') return Number(v).toFixed(2);
+  return String(v);
+}
 
-  <section>
-    <h2>Records</h2>
-    <form id="searchForm" class="search-row">
-      <div style="flex: 1;">
-        <label for="search">Search (date or description)</label>
-        <input type="text" id="search" name="search" maxlength="500">
-      </div>
-      <button type="submit" id="searchButton">Search</button>
-      <button type="button" id="saveButton" disabled>Save PDF</button>
-    </form>
-    <div id="searchStatus" class="status"></div>
+async function loadRows() {
+  try {
+    const res = await apiFetch(API);
+    const data = await res.json();
+    if (!res.ok) { setStatus('Error: ' + data.error); return; }
+    currentRows = data.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    renderTable();
+  } catch (err) {
+    setStatus('Could not reach the API at ' + API + ' (' + err.message + ')');
+  }
+}
 
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Description</th>
-            <th class="amount">Amount Due</th>
-            <th>Payee Comments</th>
-            <th>Payer Comments</th>
-          </tr>
-        </thead>
-        <tbody id="recordsBody"></tbody>
-        <tfoot>
-          <tr>
-            <td colspan="2">Total</td>
-            <td class="amount" id="totalAmount">$0.00</td>
-            <td colspan="2"></td>
-          </tr>
-        </tfoot>
-      </table>
-    </div>
-  </section>
-
-  <!-- jsPDF + AutoTable build the PDF download in the browser -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-  <script>
-    const API_URL = "https://4g3cy4kmdc.execute-api.us-east-1.amazonaws.com/default/acctPayableTest";
-
-    const addForm = document.getElementById("addForm");
-    const addButton = document.getElementById("addButton");
-    const addStatus = document.getElementById("addStatus");
-    const searchForm = document.getElementById("searchForm");
-    const searchButton = document.getElementById("searchButton");
-    const saveButton = document.getElementById("saveButton");
-    const searchStatus = document.getElementById("searchStatus");
-    const recordsBody = document.getElementById("recordsBody");
-    const totalAmount = document.getElementById("totalAmount");
-
-    // Records currently shown in the table, used by the Save button
-    let currentRecords = [];
-
-    function setStatus(el, message, type) {
-      el.textContent = message;
-      el.className = "status" + (type ? " " + type : "");
-    }
-
-    function escapeHtml(value) {
-      return String(value ?? "")
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#39;");
-    }
-
-    function formatAmount(value) {
-      const num = Number(value) || 0;
-      return num.toLocaleString("en-US", { style: "currency", currency: "USD" });
-    }
-
-    // Sums in cents to avoid floating point drift (e.g. 0.1 + 0.2)
-    function sumAmounts(records) {
-      const cents = records.reduce((total, r) => total + Math.round((Number(r.amt_due) || 0) * 100), 0);
-      return cents / 100;
-    }
-
-    // Builds a PDF of the table (including the total row) and downloads it
-    function saveRecords() {
-      const { jsPDF } = window.jspdf;
-      const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "letter" });
-      const today = new Date().toISOString().slice(0, 10);
-      const search = document.getElementById("search").value.trim();
-
-      doc.setFontSize(16);
-      doc.text("Accounts Payable", 40, 40);
-      doc.setFontSize(10);
-      doc.text(`Generated ${today}` + (search ? `  |  Search: ${search}` : ""), 40, 58);
-
-      doc.autoTable({
-        startY: 72,
-        head: [["Date", "Description", "Amount Due", "Payee Comments", "Payer Comments"]],
-        body: currentRecords.map(r => [
-          r.date_of_occurence ?? "",
-          r.description ?? "",
-          formatAmount(r.amt_due),
-          r.payee_comments ?? "",
-          r.payer_comments ?? ""
-        ]),
-        foot: [["Total", "", formatAmount(sumAmounts(currentRecords)), "", ""]],
-        showFoot: "lastPage",
-        styles: { fontSize: 9, cellPadding: 5, overflow: "linebreak" },
-        headStyles: { fillColor: [37, 99, 235] },
-        footStyles: { fillColor: [240, 240, 242], textColor: 20, fontStyle: "bold" },
-        columnStyles: {
-          0: { cellWidth: 70 },
-          2: { halign: "right", cellWidth: 80 }
-        },
-        didParseCell: data => {
-          if (data.section !== "body" && data.column.index === 2) data.cell.styles.halign = "right";
-        }
-      });
-
-      doc.save(`accounts-payable-${today}.pdf`);
-    }
-
-    // Reads the response body and throws with the Lambda's error message on failure
-    async function readResponse(response) {
-      let data = {};
-      try {
-        data = await response.json();
-      } catch (e) {
-        // Non-JSON body (e.g. API Gateway timeout page)
-      }
-      if (!response.ok) {
-        throw new Error(data.error || data.message || `Request failed (HTTP ${response.status})`);
-      }
-      return data;
-    }
-
-    async function loadRecords() {
-      const search = document.getElementById("search").value.trim();
-      const url = search ? `${API_URL}?search=${encodeURIComponent(search)}` : API_URL;
-
-      searchButton.disabled = true;
-      saveButton.disabled = true;
-      setStatus(searchStatus, "Loading records (Athena can take a few seconds)...");
-
-      try {
-        const response = await fetch(url, { method: "GET" });
-        const data = await readResponse(response);
-        const records = data.records || [];
-        currentRecords = records;
-
-        if (records.length === 0) {
-          recordsBody.innerHTML = '<tr><td colspan="5">No records found.</td></tr>';
-        } else {
-          recordsBody.innerHTML = records.map(r => `
-            <tr>
-              <td>${escapeHtml(r.date_of_occurence)}</td>
-              <td>${escapeHtml(r.description)}</td>
-              <td class="amount">${formatAmount(r.amt_due)}</td>
-              <td>${escapeHtml(r.payee_comments)}</td>
-              <td>${escapeHtml(r.payer_comments)}</td>
-            </tr>
-          `).join("");
-        }
-
-        totalAmount.textContent = formatAmount(sumAmounts(records));
-        saveButton.disabled = records.length === 0;
-        setStatus(searchStatus, `${records.length} record(s) loaded.`, "ok");
-      } catch (err) {
-        console.error(err);
-        currentRecords = [];
-        totalAmount.textContent = formatAmount(0);
-        setStatus(searchStatus, "Error: " + err.message, "error");
-      } finally {
-        searchButton.disabled = false;
-      }
-    }
-
-    addForm.addEventListener("submit", async (event) => {
-      event.preventDefault();
-
-      const body = {
-        date_of_occurence: document.getElementById("date_of_occurence").value.trim(),
-        description: document.getElementById("description").value.trim(),
-        amt_due: document.getElementById("amt_due").value.trim(),
-        payee_comments: document.getElementById("payee_comments").value.trim(),
-        payer_comments: document.getElementById("payer_comments").value.trim()
-      };
-
-      if (!body.date_of_occurence || !body.description) {
-        setStatus(addStatus, "Date of occurrence and description are required.", "error");
-        return;
-      }
-
-      addButton.disabled = true;
-      setStatus(addStatus, "Saving (Athena inserts can take several seconds)...");
-
-      try {
-        const response = await fetch(API_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body)
-        });
-        await readResponse(response);
-
-        setStatus(addStatus, "Record added.", "ok");
-        addForm.reset();
-        loadRecords();
-      } catch (err) {
-        console.error(err);
-        setStatus(addStatus, "Error: " + err.message, "error");
-      } finally {
-        addButton.disabled = false;
-      }
+function renderTable() {
+  const search = document.getElementById('search').value.toLowerCase();
+  const list = document.getElementById('rows');
+  list.innerHTML = '';
+  currentRows.filter(row =>
+    COLS.some(c => show(row, c).toLowerCase().includes(search))
+  ).forEach(row => {
+    const tr = document.createElement('tr');
+    COLS.forEach(c => {
+      const td = document.createElement('td');
+      td.textContent = show(row, c);
+      tr.appendChild(td);
     });
+    const buttonCell = document.createElement('td');
+    const editButton = document.createElement('button');
+    editButton.textContent = 'Edit';
+    editButton.addEventListener('click', () => editRow(tr, row));
+    buttonCell.appendChild(editButton);
+    const deleteButton = document.createElement('button');
+    deleteButton.textContent = 'Delete';
+    deleteButton.addEventListener('click', () => deleteRow(row.date));
+    buttonCell.appendChild(deleteButton);
+    tr.appendChild(buttonCell);
+    list.appendChild(tr);
+  });
+}
 
-    searchForm.addEventListener("submit", (event) => {
-      event.preventDefault();
-      loadRecords();
+function editRow(tr, row) {
+  tr.innerHTML = '';
+  const inputs = {};
+  COLS.forEach(c => {
+    const input = document.createElement('input');
+    if (c === 'amt_due') { input.type = 'number'; input.step = '0.01'; }
+    input.value = show(row, c);
+    inputs[c] = input;
+    const td = document.createElement('td');
+    td.appendChild(input);
+    tr.appendChild(td);
+  });
+  const buttonCell = document.createElement('td');
+  const saveButton = document.createElement('button');
+  saveButton.textContent = 'Save';
+  saveButton.addEventListener('click', () => {
+    const updated = {};
+    COLS.forEach(c => updated[c] = inputs[c].value);
+    updateRow(row.date, updated);
+  });
+  buttonCell.appendChild(saveButton);
+  const cancelButton = document.createElement('button');
+  cancelButton.textContent = 'Cancel';
+  cancelButton.addEventListener('click', loadRows);
+  buttonCell.appendChild(cancelButton);
+  tr.appendChild(buttonCell);
+}
+
+async function updateRow(oldDate, row) {
+  const res = await apiFetch(API + '/' + encodeURIComponent(oldDate), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(row)
+  });
+  const data = await res.json();
+  setStatus(res.ok ? 'Updated ' + data.date : 'Error: ' + data.error);
+  loadRows();
+}
+
+async function deleteRow(date) {
+  const res = await apiFetch(API + '/' + encodeURIComponent(date), { method: 'DELETE' });
+  const data = await res.json();
+  setStatus(res.ok ? 'Deleted ' + date : 'Error: ' + data.error);
+  loadRows();
+}
+
+document.getElementById('search').addEventListener('input', renderTable);
+
+document.getElementById('deleteAll').addEventListener('click', async () => {
+  if (!confirm('Delete every row in the table?')) return;
+  const res = await apiFetch(API, { method: 'DELETE' });
+  const data = await res.json();
+  setStatus(res.ok ? 'Deleted all rows' : 'Error: ' + data.error);
+  loadRows();
+});
+
+document.getElementById('savePdf').addEventListener('click', () => {
+  const doc = new jspdf.jsPDF();
+  doc.text('Accounts Payable Table', 14, 15);
+  doc.autoTable({
+    startY: 20,
+    head: [HEADERS],
+    body: currentRows.map(row => COLS.map(c => show(row, c)))
+  });
+  doc.save('accounts_payable.pdf');
+});
+
+document.getElementById('addForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const row = {};
+  COLS.forEach(c => row[c] = document.getElementById(c).value);
+  try {
+    const res = await apiFetch(API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(row)
     });
+    const data = await res.json();
+    setStatus(res.ok ? 'Saved ' + data.date : 'Error: ' + data.error);
+    if (res.ok) e.target.reset();
+  } catch (err) {
+    setStatus('Could not reach the API at ' + API + ' (' + err.message + ')');
+  }
+  loadRows();
+});
 
-    saveButton.addEventListener("click", saveRecords);
-
-    loadRecords();
-  </script>
-<h2>
-<a href="https://main.d3aa0oh4rm4fbf.amplifyapp.com/">Return to Main Page</a>
-</h2>
+loadRows();
+</script>
 </body>
 </html>
