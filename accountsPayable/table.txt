@@ -1,0 +1,15 @@
+create table accounts_payable (
+date text primary key,
+description text,
+amt_due float,
+payee_comms text,
+payer_comms text
+);
+
+create keyspace finance with replication = {
+'class': 'SimpleStrategy',
+'replication_factor': 1
+};
+
+insert into accounts_payable (date, description, amt_due, payee_comms, payer_comms)
+values ('11/4/2026', 'This is a test', 2.99, 'Testing', 'Testing');

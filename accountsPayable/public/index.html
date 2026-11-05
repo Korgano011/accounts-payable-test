@@ -1,0 +1,80 @@
+<html>
+<head>
+<title>Accounts Payable</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+</head>
+<body>
+<h2>Accounts Payable Table</h2>
+<button id="savePdf">Save table as PDF</button>
+<br><br>
+Search: <input type="text" id="search" placeholder="Filter by any column">
+<br><br>
+<table border="1">
+  <thead>
+    <tr><th>Date</th><th>Description</th><th>Amount Due</th><th>Payee Comments</th><th>Payer Comments</th></tr>
+  </thead>
+  <tbody id="rows"></tbody>
+</table>
+<p id="status"></p>
+
+<script>
+// Read-only view: this page (and the public server behind it) only allows GET.
+const API = '/accounts_payable';
+const COLS = ['date', 'description', 'amt_due', 'payee_comms', 'payer_comms'];
+const HEADERS = ['Date', 'Description', 'Amount Due', 'Payee Comments', 'Payer Comments'];
+let currentRows = [];
+
+function show(row, c) {
+  const v = row[c];
+  if (v === null || v === undefined) return '';
+  if (c === 'amt_due') return Number(v).toFixed(2);
+  return String(v);
+}
+
+async function loadRows() {
+  try {
+    const res = await fetch(API);
+    const data = await res.json();
+    if (!res.ok) { document.getElementById('status').textContent = 'Error: ' + data.error; return; }
+    currentRows = data.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    renderTable();
+  } catch (err) {
+    document.getElementById('status').textContent = 'Could not load the table (' + err.message + ')';
+  }
+}
+
+function renderTable() {
+  const search = document.getElementById('search').value.toLowerCase();
+  const list = document.getElementById('rows');
+  list.innerHTML = '';
+  currentRows.filter(row =>
+    COLS.some(c => show(row, c).toLowerCase().includes(search))
+  ).forEach(row => {
+    const tr = document.createElement('tr');
+    COLS.forEach(c => {
+      const td = document.createElement('td');
+      td.textContent = show(row, c);
+      tr.appendChild(td);
+    });
+    list.appendChild(tr);
+  });
+}
+
+document.getElementById('search').addEventListener('input', renderTable);
+
+document.getElementById('savePdf').addEventListener('click', () => {
+  const doc = new jspdf.jsPDF();
+  doc.text('Accounts Payable Table', 14, 15);
+  doc.autoTable({
+    startY: 20,
+    head: [HEADERS],
+    body: currentRows.map(row => COLS.map(c => show(row, c)))
+  });
+  doc.save('accounts_payable.pdf');
+});
+
+loadRows();
+</script>
+</body>
+</html>

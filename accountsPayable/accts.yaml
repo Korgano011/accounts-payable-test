@@ -1,0 +1,35 @@
+services:
+  website:
+    image: nginx:latest
+    container_name: acct_payable
+    volumes:
+      - ./:/usr/share/nginx/html
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      # Editable page: this Mac only
+      - 127.0.0.1:8082:80
+    networks:
+      - default
+      - db_default
+    restart: always
+
+  # Public read-only page at a permanent ngrok address (https://${NGROK_DOMAIN}).
+  # Token and domain come from .env in this folder (kept out of git).
+  tunnel:
+    image: ngrok/ngrok:latest
+    container_name: acct_payable_tunnel
+    command: http --url=${NGROK_DOMAIN} acct_payable:8090
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+    depends_on:
+      - website
+    networks:
+      - default
+    restart: always
+
+networks:
+  db_default:
+    external: true
+
+# docker compose -f accts.yaml up -d
+# Public URL: https://<NGROK_DOMAIN from .env>   (stop it: docker stop acct_payable_tunnel)

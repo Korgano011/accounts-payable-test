@@ -1,0 +1,54 @@
+services:
+  cassandra:
+    image: cassandra:5.0
+    container_name: my_cassandra
+    ports:
+      - "127.0.0.1:9042:9042"
+    environment:
+      - CASSANDRA_CLUSTER_NAME=DevCluster
+      - CASSANDRA_DC=DC1
+      - CASSANDRA_RACK=Rack1
+      - CASSANDRA_ENDPOINT_SNITCH=GossipingPropertyFileSnitch
+      - MAX_HEAP_SIZE=2G
+      - HEAP_NEWSIZE=800M
+    volumes:
+      - cassandra_data:/var/lib/cassandra
+    restart: always
+    healthcheck:
+      test: ["CMD", "cqlsh", "-e", "describe keyspaces"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  test-api:
+    build: ./api
+    image: test-api
+    container_name: test-api
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      - CASSANDRA_HOST=cassandra
+      - CASSANDRA_DC=DC1
+    depends_on:
+      cassandra:
+        condition: service_healthy
+    restart: always
+
+  web:
+    image: nginx:alpine
+    container_name: timesheets-web
+    ports:
+      - "127.0.0.1:80:80"
+      - "127.0.0.1:8080:80"
+    volumes:
+      - ./pages:/usr/share/nginx/html:ro
+      - ./web/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - test-api
+    restart: always
+
+volumes:
+  cassandra_data:
+
+# docker compose -f cass.yaml up -d

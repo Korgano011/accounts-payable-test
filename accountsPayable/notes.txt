@@ -1,0 +1,33 @@
+docker run -d --name test-site -p 8080:80 -v "${PWD}:/usr/share/nginx/html" nginx:alpine
+
+http://localhost:8080/
+
+docker stop test-site
+
+docker rm test-site
+
+docker stop website
+
+docker rm website
+
+create keyspace test with replication = {
+'class': 'SimpleStrategy',
+'replication_factor': 1
+};
+
+create table test (
+item text primary key,
+description text
+);
+
+truncate test;
+
+--- page2 -> cassandra (API container) ---
+# test-api is a service in cass.yaml (starts after Cassandra is healthy)
+docker compose -f cass.yaml up -d --build
+
+docker compose -f cass.yaml down
+
+--- http://localhost/index1.html (Mac only) ---
+# cass.yaml services: cassandra, test-api, web (nginx :80/:8080, proxies /timesheets -> test-api)
+# All ports bound to 127.0.0.1 - only this Mac can reach them. Tailscale + dns service removed 2026-11-03.
