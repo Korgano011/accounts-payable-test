@@ -178,12 +178,23 @@ document.getElementById('deleteAll').addEventListener('click', async () => {
 });
 
 document.getElementById('savePdf').addEventListener('click', () => {
+  // Use the same rows you see on screen (respects the Search box)
+  const search = document.getElementById('search').value.toLowerCase();
+  const rows = currentRows.filter(row =>
+    COLS.some(c => show(row, c).toLowerCase().includes(search))
+  );
+  const total = rows.reduce((sum, row) => sum + (Number(row.amt_due) || 0), 0);
+
   const doc = new jspdf.jsPDF();
   doc.text('Accounts Payable Table', 14, 15);
   doc.autoTable({
     startY: 20,
     head: [HEADERS],
-    body: currentRows.map(row => COLS.map(c => show(row, c)))
+    body: rows.map(row => COLS.map(c => show(row, c))),
+    // NEW: the sum row. 5 cells to match the 5 columns:
+    // Date, Description, Amount Due, Payee Comments, Payer Comments
+    foot: [['', 'TOTAL:', total.toFixed(2), '', '']],
+    showFoot: 'lastPage'      // print the total once, at the end
   });
   doc.save('accounts_payable.pdf');
 });
