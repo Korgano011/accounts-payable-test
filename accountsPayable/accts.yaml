@@ -13,23 +13,22 @@ services:
       - db_default
     restart: always
 
-  # Public read-only page at a permanent ngrok address (https://${NGROK_DOMAIN}).
-  # Token and domain come from .env in this folder (kept out of git).
+  # Public site through a free Cloudflare quick tunnel (no account needed).
+  # The address changes whenever this container restarts, so start everything with
+  # ./publish-tunnel.sh, which also sends the new address to GitHub (api.json).
   tunnel:
-    image: ngrok/ngrok:latest
+    image: cloudflare/cloudflared:latest
     container_name: acct_payable_tunnel
-    command: http --url=${NGROK_DOMAIN} acct_payable:8090
-    environment:
-      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+    command: tunnel --no-autoupdate --url http://acct_payable:8090
     depends_on:
       - website
     networks:
       - default
-    restart: always
+    restart: unless-stopped
 
 networks:
   db_default:
     external: true
 
 # docker compose -f accts.yaml up -d
-# Public URL: https://<NGROK_DOMAIN from .env>   (stop it: docker stop acct_payable_tunnel)
+# Start + publish the tunnel address: ./publish-tunnel.sh   (stop it: docker stop acct_payable_tunnel)
